@@ -35,11 +35,11 @@ namespace Microsoft.PowerShell.ThreadJob
         private const string ScriptBlockParameterSet = "ScriptBlock";
         private const string FilePathParameterSet = "FilePath";
 
-        [Parameter(ParameterSetName = ScriptBlockParameterSet, Mandatory=true, Position=0)]
+        [Parameter(ParameterSetName = ScriptBlockParameterSet, Mandatory = true, Position = 0)]
         [ValidateNotNullAttribute]
         public ScriptBlock ScriptBlock { get; set; }
 
-        [Parameter(ParameterSetName = FilePathParameterSet, Mandatory=true, Position=0)]
+        [Parameter(ParameterSetName = FilePathParameterSet, Mandatory = true, Position = 0)]
         [ValidateNotNullOrEmpty]
         public string FilePath { get; set; }
 
@@ -53,8 +53,8 @@ namespace Microsoft.PowerShell.ThreadJob
         [ValidateNotNull]
         public ScriptBlock InitializationScript { get; set; }
 
-        [Parameter(ParameterSetName = ScriptBlockParameterSet, ValueFromPipeline=true)]
-        [Parameter(ParameterSetName = FilePathParameterSet, ValueFromPipeline=true)]
+        [Parameter(ParameterSetName = ScriptBlockParameterSet, ValueFromPipeline = true)]
+        [Parameter(ParameterSetName = FilePathParameterSet, ValueFromPipeline = true)]
         [ValidateNotNull]
         public PSObject InputObject { get; set; }
 
@@ -70,6 +70,10 @@ namespace Microsoft.PowerShell.ThreadJob
         [Parameter(ParameterSetName = ScriptBlockParameterSet)]
         [Parameter(ParameterSetName = FilePathParameterSet)]
         public PSHost StreamingHost { get; set; }
+
+        [Parameter]
+        [ValidateRange(1, int.MaxValue)]
+        public int CancellationTimeout { get; set; } = -1;
 
         #endregion
 
@@ -126,6 +130,11 @@ namespace Microsoft.PowerShell.ThreadJob
                 {
                     _threadJob.InjectInput(InputObject);
                 }
+            }
+
+            if (CancellationTimeout != -1)
+            {
+                _threadJob.SetTimeout(CancellationTimeout);
             }
         }
 
@@ -475,6 +484,7 @@ namespace Microsoft.PowerShell.ThreadJob
         private PSHost _streamingHost;
         private Debugger _jobDebugger;
         private string _currentLocationPath;
+        private readonly CancellationTokenSource _src = new CancellationTokenSource();
 
         private const string VERBATIM_ARGUMENT = "--%";
 
@@ -590,6 +600,12 @@ namespace Microsoft.PowerShell.ThreadJob
             // Create Runspace/PowerShell object and state callback.
             // The job script/command will run in a separate thread associated with the Runspace.
             var iss = InitialSessionState.CreateDefault2();
+            iss.Variables.Add(
+                new SessionStateVariableEntry(
+                    name: "Token",
+                    value: _src.Token,
+                    description: null,
+                    options: ScopedItemOptions.ReadOnly));
 
             // Determine session language mode for Windows platforms
             WarningRecord lockdownWarning = null;
@@ -625,6 +641,7 @@ namespace Microsoft.PowerShell.ThreadJob
             {
                 _rs = RunspaceFactory.CreateRunspace(iss);
             }
+
             _ps = System.Management.Automation.PowerShell.Create();
             _ps.Runspace = _rs;
             _ps.InvocationStateChanged += (sender, psStateChanged) =>
@@ -639,11 +656,11 @@ namespace Microsoft.PowerShell.ThreadJob
                         break;
 
                     case PSInvocationState.Stopped:
-                        SetJobState(JobState.Stopped, newStateInfo.Reason, disposeRunspace:true);
+                        SetJobState(JobState.Stopped, newStateInfo.Reason, disposeRunspace: true);
                         break;
 
                     case PSInvocationState.Failed:
-                        SetJobState(JobState.Failed, newStateInfo.Reason, disposeRunspace:true);
+                        SetJobState(JobState.Failed, newStateInfo.Reason, disposeRunspace: true);
                         break;
 
                     case PSInvocationState.Completed:
@@ -655,7 +672,7 @@ namespace Microsoft.PowerShell.ThreadJob
                         }
                         else
                         {
-                            SetJobState(JobState.Completed, newStateInfo.Reason, disposeRunspace:true);
+                            SetJobState(JobState.Completed, newStateInfo.Reason, disposeRunspace: true);
                         }
                         break;
                 }
@@ -786,6 +803,7 @@ namespace Microsoft.PowerShell.ThreadJob
         {
             if (disposing)
             {
+                _src.Dispose();
                 if (_ps.InvocationStateInfo.State == PSInvocationState.Running)
                 {
                     _ps.Stop();
@@ -836,6 +854,7 @@ namespace Microsoft.PowerShell.ThreadJob
         /// </summary>
         public override void StopJob()
         {
+            _src.Cancel();
             _ps.Stop();
         }
 
@@ -892,6 +911,7 @@ namespace Microsoft.PowerShell.ThreadJob
         /// <param name="reason"></param>
         public override void StopJob(bool force, string reason)
         {
+            _src.Cancel();
             _ps.Stop();
         }
 
@@ -909,7 +929,8 @@ namespace Microsoft.PowerShell.ThreadJob
         /// </summary>
         public override void StopJobAsync()
         {
-            _ps.BeginStop((iasync) => { OnStopJobCompleted(new AsyncCompletedEventArgs(null, false, this)); }, null);
+            _src.Cancel();
+            _ps.BeginStop(StopJobAsyncAction, null);
         }
 
         /// <summary>
@@ -919,7 +940,8 @@ namespace Microsoft.PowerShell.ThreadJob
         /// <param name="reason"></param>
         public override void StopJobAsync(bool force, string reason)
         {
-            _ps.BeginStop((iasync) => { OnStopJobCompleted(new AsyncCompletedEventArgs(null, false, this)); }, null);
+            _src.Cancel();
+            _ps.BeginStop(StopJobAsyncAction, null);
         }
 
         #region Not implemented
@@ -1028,6 +1050,15 @@ namespace Microsoft.PowerShell.ThreadJob
         #region Private methods
 
         // Private methods
+        internal void SetTimeout(int seconds) => _src.CancelAfter(seconds * 1000);
+
+        private void StopJobAsyncAction(IAsyncResult iasync)
+        {
+            _ps.EndStop(iasync);
+            OnStopJobCompleted(new AsyncCompletedEventArgs(null, false, this));
+        }
+
+
         private void RunScript()
         {
             _ps.Commands.Clear();
