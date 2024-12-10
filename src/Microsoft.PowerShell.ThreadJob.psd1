@@ -8,7 +8,7 @@
 RootModule = '.\Microsoft.PowerShell.ThreadJob.dll'
 
 # Version number of this module.
-ModuleVersion = '2.1.1'
+ModuleVersion = '2.1.2'
 
 # ID used to uniquely identify this module
 GUID = 'a84b375d-c1d6-4a1c-bcb7-8059bc28cd98'
@@ -23,11 +23,11 @@ PowerShell's built-in BackgroundJob jobs (Start-Job) are run in separate process
 They provide excellent isolation but are resource heavy.  Running hundreds of BackgroundJob jobs can quickly
 absorb system resources.
 
-This module extends the existing PowerShell BackgroundJob to include a new thread based ThreadJob job.  This is a 
-lighter weight solution for running concurrent PowerShell scripts that works within the existing PowerShell job 
+This module extends the existing PowerShell BackgroundJob to include a new thread based ThreadJob job.  This is a
+lighter weight solution for running concurrent PowerShell scripts that works within the existing PowerShell job
 infrastructure.
 
-ThreadJob jobs will tend to run quicker because there is lower overhead and they do not use the remoting serialization 
+ThreadJob jobs will tend to run quicker because there is lower overhead and they do not use the remoting serialization
 system.  And they will use up fewer system resources.  In addition output objects returned from the job will be
 'live' since they are not re-hydrated from the serialization system.  However, there is less isolation.  If one
 ThreadJob job crashes the process then all ThreadJob jobs running in that process will be terminated.
